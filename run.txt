@@ -1,0 +1,78 @@
+### 4. Part C: Vast.ai GPU Instance ပေါ်တွင် Execution ပြုလုပ်ခြင်း
+
+Vast.ai တွင် GPU Instance တစ်ခု (RTX 3090 / RTX 4090 သို့မဟုတ် A6000) ငှားရမ်းပြီးပါက အောက်ပါအတိုင်း အဆင့်ဆင့် ဆောင်ရွက်ပါ:
+
+==============================================================================================================
+
+Step 1: Vast.ai သို့ SSH ဖြင့် ဝင်ရောက်ခြင်း
+Vast.ai Dashboard မှပေးသော SSH Command ကို ရိုက်ထည့်ပါ:
+ssh -p <PORT> root@<VAST_IP_ADDRESS>
+
+==============================================================================================================
+
+Step 2: Project Repository ကို Clone / Pull ပြုလုပ်ခြင်း
+
+    git clone https://github.com/DepthAnything/Depth-Anything-V2
+    cd Depth-MonoIA
+
+==============================================================================================================
+
+
+Step 3: KITTI Dataset ကို Script ဖြင့် Auto-Download ပြုလုပ်ခြင်း
+`download_kitti.sh` ကို Executable ပြုလုပ်ပြီး Run ပါ (ဝဘ်လိုင်းမြန်နှုန်းပေါ် မူတည်၍ ၃ မိနစ်မှ ၁၀ မိနစ်ခန့် ကြာမြင့်မည်):
+
+    chmod +x scripts/download_kitti.sh
+    bash scripts/download_kitti.sh
+
+==============================================================================================================
+
+Step 4: Conda Environment &amp; Dependencies ပြင်ဆင်ခြင်:
+
+    # Conda Environment ဖန်တီးခြင်း conda create -n depth_monoia python=3.9 -y
+    conda activate depth_monoia
+
+    # PyTorch (CUDA 12.1) တပ်ဆင်ခြင်း [3]
+    conda install pytorch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 pytorch-cuda=12.1 -c pytorch -c nvidia -y
+
+    # Requirements &amp; Deformable Attention CUDA Ops ကို Compile လုပ်ခြင်း [3]
+    pip install -r requirements.txt
+    cd lib/models/monoia/ops/
+    bash make.sh
+    cd ../../../..
+
+==============================================================================================================
+
+Step 5: Depth Anything v2 Code Base &amp; Checkpoint ရယူခြင်း (Exact Code Commands)
+
+    # Depth Anything v2 Official GitHub Repository ကို Clone လုပ်ပါ
+        cd lib/deps
+        git clone https://github.com/DepthAnything/Depth-Anything-V2
+        cd Depth-Anything-V2
+        pip install -r requirements.txt 
+        cd ../../..
+    
+    # Checkpoints Folder
+        mkdir -p checkpoints
+
+    # Depth Anything v2 Small (vits) Pretrained Weight ကို ဒေါင်းလုဒ်ဆွဲပါ
+        
+        # Small Model (vits- 24.8M params)
+        wget -c "https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/main/depth_anything_v2_vits.pth?download=true" -O checkpoints/depth_anything_v2_vits.pth
+
+
+        # Base Model (vits- 97.5M params)
+        wget -c "https://huggingface.co/depth-anything/Depth-Anything-V2-Base/resolve/main/depth_anything_v2_vits.pth?download=true" -O checkpoints/depth_anything_v2_vits.pth
+
+
+        # Large Model (vits- 335.5M params)
+        wget -c "https://huggingface.co/depth-anything/Depth-Anything-V2-Large/resolve/main/depth_anything_v2_vits.pth?download=true" -O checkpoints/depth_anything_v2_vits.pth
+
+
+==============================================================================================================
+
+Step 6: Model Training စတင်ခြင်း
+
+    # MonoIA Baseline သို့မဟုတ် Depth-MonoIA စတင် Train ခြင်း
+    bash train.sh 0 --config config/monoia.yaml
+
+==============================================================================================================
