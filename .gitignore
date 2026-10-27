@@ -1,6 +1,15 @@
-data/ 
-checkpoints/ 
-outputs/ 
-*.pth 
-*.zip 
-*.tar.gz
+# Local dependencies and backups
+external/
+local_backups/
+MonoIA_old_gitlink/
+
+# Data and generated artifacts
+**/data/
+**/outputs/
+checkpoints/
+artifacts/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
