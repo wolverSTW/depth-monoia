@@ -1,0 +1,6 @@
+data/ 
+checkpoints/ 
+outputs/ 
+*.pth 
+*.zip 
+*.tar.gz
