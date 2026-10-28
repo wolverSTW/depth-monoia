@@ -14,16 +14,8 @@ __pycache__/
 *.pyc
 .venv/
 
-
 # Pretrained model checkpoints
 /weights/
 
-# Training outputs
-/outputs/
-
-
-# Downloaded archives and temporary datasets
+# Downloaded archives
 /downloads/
-
-# Local KITTI dataset
-/MonoIA/data/KITTIDataset/
