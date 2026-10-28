@@ -20,3 +20,10 @@ __pycache__/
 
 # Training outputs
 /outputs/
+
+
+# Downloaded archives and temporary datasets
+/downloads/
+
+# Local KITTI dataset
+/MonoIA/data/KITTIDataset/

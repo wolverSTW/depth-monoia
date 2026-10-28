@@ -41,3 +41,15 @@ KITTI 3D Object Detection Benchmark
 Repository setup only.
 Full training not performed.
 AP3D results not yet generated.
+
+## Depth Anything V2 Checkpoint
+
+- Architecture: Depth Anything V2 Small (ViT-S)
+- Checkpoint: depth_anything_v2_vits.pth
+- Source: https://huggingface.co/depth-anything/Depth-Anything-V2-Small
+- SHA-256: 715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378
+- Checkpoint size: approximately 99.22 MB
+- Strict loading: PASS
+- Total parameters: 24,785,089
+- Trainable encoder parameters: 0
+- Encoder evaluation mode: PASS
