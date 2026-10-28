@@ -13,3 +13,10 @@ artifacts/
 __pycache__/
 *.pyc
 .venv/
+
+
+# Pretrained model checkpoints
+/weights/
+
+# Training outputs
+/outputs/
