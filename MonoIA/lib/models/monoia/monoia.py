@@ -23,6 +23,9 @@ from .region_seg_head import RegionSegHead
 from .attribute_net import AttributeNet
 from .position_encoding import PositionEmbeddingSine
 from .connector import Connector
+from .depth_extractor import DepthFeatureExtractor
+from .depth_fusion import IntrinsicGuidedDepthFusion
+
 
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
@@ -32,8 +35,23 @@ def _get_clones(module, N):
 
 class MonoIA(nn.Module):
     """ This is the MonoIA module that performs monocualr 3D object detection """
-    def __init__(self, backbone, depthaware_transformer, depth_predictor, num_classes, num_queries, num_feature_levels, 
-                 aux_loss=True, with_box_refine=False, init_box=False, group_num=11, num_channels=[512, 1024, 2048], target_focal_list=[700], focal_embedding_path=None):
+    def __init__(
+        self,
+        backbone,
+        depthaware_transformer,
+        depth_predictor,
+        num_classes,
+        num_queries,
+        num_feature_levels,
+        aux_loss=True,
+        with_box_refine=False,
+        init_box=False,
+        group_num=11,
+        num_channels=[512, 1024, 2048],
+        target_focal_list=[700],
+        focal_embedding_path=None,
+        depth_fusion_cfg=None,
+    ):
         """ Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -53,6 +71,42 @@ class MonoIA(nn.Module):
         hidden_dim = depthaware_transformer.d_model
         self.hidden_dim = hidden_dim
         self.num_feature_levels = num_feature_levels
+
+
+        # Optional Depth Anything V2 Fusion
+        fusion_cfg = depth_fusion_cfg or {}
+
+        self.depth_fusion_enabled = bool(
+            fusion_cfg.get("enabled", False)
+        )
+
+        if self.depth_fusion_enabled:
+            # Lazy imports preserve baseline independence.
+            from .depth_extractor import DepthFeatureExtractor
+            from .depth_fusion import IntrinsicGuidedDepthFusion
+
+            checkpoint_path = fusion_cfg.get("checkpoint_path")
+
+            if not checkpoint_path:
+                raise ValueError(
+                    "Depth Fusion is enabled, but no authentic "
+                    "Depth Anything V2 checkpoint was provided."
+                )
+
+            self.depth_extractor = DepthFeatureExtractor(
+                checkpoint_path=checkpoint_path,
+                encoder=fusion_cfg.get("encoder", "vits"),
+            )
+
+            self.depth_fusions = nn.ModuleList([
+                IntrinsicGuidedDepthFusion(
+                    rgb_channels=hidden_dim,
+                    depth_channels=384,
+                    intrinsic_dim=hidden_dim,
+                )
+                for _ in range(num_feature_levels)
+            ])
+
         self.label_enc = nn.Embedding(num_classes + 1, hidden_dim - 1)  # # for indicator
         # prediction heads
         self.class_embed = nn.Linear(hidden_dim, num_classes)
@@ -210,8 +264,28 @@ class MonoIA(nn.Module):
         # feature-level adaptation
         for i in range(len(srcs)):
                 srcs[i] += batch_embeddings[:, :, None, None]
+
         
-        
+        # Optional Depth Anything V2 feature fusion
+        if self.depth_fusion_enabled:
+            depth_features = self.depth_extractor(images)
+
+            if len(self.depth_fusions) != len(srcs):
+                raise RuntimeError(
+                    "Depth fusion module count does not "
+                    "match MonoIA feature levels."
+                )
+
+            srcs = [
+                fusion(
+                    rgb_features=src,
+                    depth_features=depth_features,
+                    intrinsic_embedding=batch_embeddings,
+                )
+                for fusion, src in zip(self.depth_fusions, srcs)
+            ]
+
+
         if self.training:
             query_embeds = self.query_embed.weight
         else:
@@ -621,8 +695,10 @@ def build(cfg):
         init_box=cfg['init_box'],
         num_channels=cfg['num_channels'],
         target_focal_list=cfg['target_focal_list'],
-        focal_embedding_path=cfg['focal_embedding_path'])
-    
+        focal_embedding_path=cfg['focal_embedding_path'],
+        depth_fusion_cfg=cfg.get('depth_fusion', None),
+    )
+
 
     # matcher
     matcher = build_matcher(cfg)

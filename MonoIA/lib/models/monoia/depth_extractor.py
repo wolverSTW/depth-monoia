@@ -66,42 +66,46 @@ class DepthFeatureExtractor(nn.Module):
         self.model.eval()
         return self
 
+
     @torch.no_grad()
     def forward(self, images):
         if images.ndim != 4:
-            raise ValueError(
-                "Expected BCHW image tensor"
-            )
+            raise ValueError("Expected BCHW image tensor")
 
         if images.shape[1] != 3:
-            raise ValueError(
-                "Expected 3 RGB channels"
-            )
+            raise ValueError("Expected 3 RGB channels")
 
         height, width = images.shape[-2:]
 
-        if height % self.patch_size != 0:
-            raise ValueError(
-                "Image height must be divisible by 14"
-            )
-
-        if width % self.patch_size != 0:
-            raise ValueError(
-                "Image width must be divisible by 14"
-            )
-
-        layer_ids = (
-            self.model.intermediate_layer_idx[
-                self.encoder_name
-            ]
+        # Images are already RGB and ImageNet-normalized
+        # by the MonoIA KITTI data pipeline.
+        patch_h = max(
+            self.patch_size,
+            round(height / self.patch_size)
+            * self.patch_size,
+        )
+        patch_w = max(
+            self.patch_size,
+            round(width / self.patch_size)
+            * self.patch_size,
         )
 
-        features = (
-            self.model.pretrained.get_intermediate_layers(
+        if (patch_h, patch_w) != (height, width):
+            images = torch.nn.functional.interpolate(
                 images,
-                layer_ids,
-                reshape=True,
+                size=(patch_h, patch_w),
+                mode="bilinear",
+                align_corners=False,
             )
+
+        layer_ids = self.model.intermediate_layer_idx[
+            self.encoder_name
+        ]
+
+        features = self.model.pretrained.get_intermediate_layers(
+            images,
+            layer_ids,
+            reshape=True,
         )
 
         return features[-1]

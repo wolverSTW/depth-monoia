@@ -95,6 +95,12 @@ model:
   set_cost_giou: 2
   set_cost_3dcenter: 10
 
+  # depth fusion
+  depth_fusion:
+    enabled: false
+    encoder: "vits"
+    checkpoint_path: null
+
 optimizer:
   type: "adamw"
   lr: 0.0002
