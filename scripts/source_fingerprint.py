@@ -29,6 +29,10 @@ SOURCE_EXTENSIONS = {
     ".yml",
     ".json",
     ".sh",
+    ".cu",
+    ".cpp",
+    ".h",
+    ".cuh",
 }
 
 
