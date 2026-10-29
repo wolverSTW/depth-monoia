@@ -5,9 +5,12 @@ import torch
 import numpy as np
 import torch.nn as nn
 
+from pathlib import Path
 from lib.helpers.save_helper import get_checkpoint_state
 from lib.helpers.save_helper import load_checkpoint
 from lib.helpers.save_helper import save_checkpoint
+from scripts.checkpoint_provenance import assert_provenance_matches
+from scripts.source_fingerprint import build_source_fingerprint
 
 from utils import misc
 
@@ -25,6 +28,67 @@ class Trainer(object):
                  loss,
                  model_name):
         self.cfg = cfg
+
+        # Training and resume must have experiment provenance.
+        self.experiment_provenance = cfg.get(
+            "experiment_provenance"
+        )
+
+        if not isinstance(self.experiment_provenance, dict):
+            raise ValueError(
+                "Missing experiment provenance. "
+                "Training/resume is blocked."
+            )
+
+        if self.experiment_provenance.get("schema_version") != 3:
+            raise ValueError(
+                "Unsupported experiment provenance schema."
+            )
+
+        if "depth_dependency" not in self.experiment_provenance:
+            raise ValueError(
+                "Missing depth dependency provenance. "
+                "Training/resume is blocked."
+            )
+
+        source_manifest = self.experiment_provenance.get("source")
+
+        if not isinstance(source_manifest, dict):
+            raise ValueError(
+                "Missing training source fingerprint. "
+                "Training/resume is blocked."
+            )
+
+        # Verify the experiment identity and nested source manifest.
+        assert_provenance_matches(
+            saved=self.experiment_provenance,
+            current=self.experiment_provenance,
+        )
+
+        from scripts.source_fingerprint import (
+            assert_source_fingerprint_matches,
+        )
+
+        assert_source_fingerprint_matches(
+            saved=source_manifest,
+            current=source_manifest,
+        )
+
+        # Independently fingerprint the actual source on disk.
+        # trainer_helper.py is located at:
+        # <repo>/MonoIA/lib/helpers/trainer_helper.py
+        repository_root = Path(__file__).resolve().parents[3]
+
+        current_source_manifest = build_source_fingerprint(
+            repository_root
+        )
+
+        assert_source_fingerprint_matches(
+            saved=source_manifest,
+            current=current_source_manifest,
+        )
+
+
         self.model = model
         self.optimizer = optimizer
         self.train_loader = train_loader
@@ -38,80 +102,206 @@ class Trainer(object):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.detr_loss = loss
         self.model_name = model_name
-        self.output_dir = os.path.join('./' + cfg['save_path'], model_name)
+        # self.output_dir = os.path.join('./' + cfg['save_path'], model_name)
+        self.output_dir = os.path.abspath(os.path.join(cfg["save_path"], model_name))
         self.tester = None
 
-        # loading pretrain/resume model
-        if cfg.get('pretrain_model'):
-            assert os.path.exists(cfg['pretrain_model'])
-            load_checkpoint(model=self.model,
-                            optimizer=None,
-                            filename=cfg['pretrain_model'],
-                            map_location=self.device,
-                            logger=self.logger)
+        # # loading pretrain/resume model
+        # if cfg.get('pretrain_model'):
+        #     assert os.path.exists(cfg['pretrain_model'])
+        #     load_checkpoint(model=self.model,
+        #                     optimizer=None,
+        #                     filename=cfg['pretrain_model'],
+        #                     map_location=self.device,
+        #                     logger=self.logger)
 
-        if cfg.get('resume_model', None):
-            resume_model_path = os.path.join(self.output_dir, "checkpoint.pth")
-            assert os.path.exists(resume_model_path)
-            self.epoch, self.best_result, self.best_epoch = load_checkpoint(
-                model=self.model.to(self.device),
-                optimizer=self.optimizer,
-                filename=resume_model_path,
+        # if cfg.get('resume_model', None):
+        #     resume_model_path = os.path.join(self.output_dir, "checkpoint.pth")
+        #     assert os.path.exists(resume_model_path)
+        #     self.epoch, self.best_result, self.best_epoch = load_checkpoint(
+        #         model=self.model.to(self.device),
+        #         optimizer=self.optimizer,
+        #         filename=resume_model_path,
+        #         map_location=self.device,
+        #         logger=self.logger)
+        #     self.lr_scheduler.last_epoch = self.epoch - 1
+        #     self.logger.info("Loading Checkpoint... Best Result:{}, Best Epoch:{}".format(self.best_result, self.best_epoch))
+
+
+
+        # Loading pretrained weights or resuming a training run.
+        pretrain_path = cfg.get("pretrain_model")
+        resume_path = cfg.get("resume_checkpoint")
+
+        if pretrain_path and resume_path:
+            raise ValueError(
+                "pretrain_model and resume_checkpoint "
+                "are mutually exclusive"
+            )
+
+        if cfg.get("resume_model") and not resume_path:
+            raise ValueError(
+                "Legacy resume_model is not supported here. "
+                "Use --resume /path/to/checkpoint.pth"
+            )
+
+        if pretrain_path:
+            if not os.path.isfile(pretrain_path):
+                raise FileNotFoundError(pretrain_path)
+
+            load_checkpoint(
+                model=self.model,
+                optimizer=None,
+                filename=pretrain_path,
                 map_location=self.device,
-                logger=self.logger)
-            self.lr_scheduler.last_epoch = self.epoch - 1
-            self.logger.info("Loading Checkpoint... Best Result:{}, Best Epoch:{}".format(self.best_result, self.best_epoch))
-        
+                logger=self.logger,
+            )
+
+        if resume_path:
+            if not os.path.isfile(resume_path):
+                raise FileNotFoundError(resume_path)
+
+            self.epoch, self.best_result, self.best_epoch = (
+                load_checkpoint(
+                    model=self.model,
+                    optimizer=self.optimizer,
+                    filename=resume_path,
+                    map_location=self.device,
+                    logger=self.logger,
+                    lr_scheduler=self.lr_scheduler,
+                    warmup_lr_scheduler=self.warmup_lr_scheduler,
+                    restore_rng=True,
+                    expected_provenance=self.experiment_provenance,
+                )
+            )
+
+
+            self.logger.info(
+                "Resume loaded: epoch=%s, best_result=%s, "
+                "best_epoch=%s",
+                self.epoch,
+                self.best_result,
+                self.best_epoch,
+            )
+
+
     def train(self):
         start_epoch = self.epoch
 
-        progress_bar = tqdm.tqdm(range(start_epoch, self.cfg['max_epoch']), dynamic_ncols=True, leave=True, desc='epochs')
+        progress_bar = tqdm.tqdm(
+            range(start_epoch, self.cfg["max_epoch"]),
+            dynamic_ncols=True,
+            leave=True,
+            desc="epochs",
+        )
+
         best_result = self.best_result
         best_epoch = self.best_epoch
-        for epoch in range(start_epoch, self.cfg['max_epoch']):
-            # reset random seed
-            # ref: https://github.com/pytorch/pytorch/issues/5059
-            np.random.seed(np.random.get_state()[1][0] + epoch)
-            # train one epoch
+
+        save_frequency = self.cfg["save_frequency"]
+        if not isinstance(save_frequency, int) or save_frequency <= 0:
+            raise ValueError("save_frequency must be a positive integer")
+
+        for epoch in range(start_epoch, self.cfg["max_epoch"]):
+            # Preserve the original MonoIA epoch-seeding behavior.
+            np.random.seed(
+                np.random.get_state()[1][0] + epoch
+            )
+
             self.train_one_epoch(epoch)
             self.epoch += 1
 
-            # update learning rate
+            # Preserve the original learning-rate scheduling order.
             if self.warmup_lr_scheduler is not None and epoch < 5:
                 self.warmup_lr_scheduler.step()
             else:
                 self.lr_scheduler.step()
 
-            # save trained model
-            if (self.epoch % self.cfg['save_frequency']) == 0:
+            if (self.epoch % save_frequency) == 0:
                 os.makedirs(self.output_dir, exist_ok=True)
-                if self.cfg['save_all']:
-                    ckpt_name = os.path.join(self.output_dir, 'checkpoint_epoch_%d' % self.epoch)
-                else:
-                    ckpt_name = os.path.join(self.output_dir, 'checkpoint')
-               
-                save_checkpoint(
-                    get_checkpoint_state(self.model, self.optimizer, self.epoch, best_result, best_epoch),
-                    ckpt_name)
 
+                improved = False
+
+                # Complete validation before recording the
+                # latest checkpoint metadata.
                 if self.tester is not None:
-                    self.logger.info("Test Epoch {}".format(self.epoch))
+                    self.logger.info(
+                        "Test Epoch %s",
+                        self.epoch,
+                    )
+
                     self.tester.inference()
                     cur_result = self.tester.evaluate()
-                    if cur_result > best_result:
+
+                    if best_epoch == 0 or cur_result > best_result:
                         best_result = cur_result
                         best_epoch = self.epoch
-                        ckpt_name = os.path.join(self.output_dir, 'checkpoint_best')
-                        save_checkpoint(
-                            get_checkpoint_state(self.model, self.optimizer, self.epoch, best_result, best_epoch),
-                            ckpt_name)
-                    self.logger.info("Best Result:{}, epoch:{}".format(best_result, best_epoch))
+                        improved = True
+
+                # Keep the Trainer's in-memory metadata synchronized.
+                self.best_result = best_result
+                self.best_epoch = best_epoch
+
+                # Capture one coherent checkpoint state after validation.
+                checkpoint_state = get_checkpoint_state(
+                    model=self.model,
+                    optimizer=self.optimizer,
+                    epoch=self.epoch,
+                    best_result=best_result,
+                    best_epoch=best_epoch,
+                    lr_scheduler=self.lr_scheduler,
+                    warmup_lr_scheduler=self.warmup_lr_scheduler,
+                    include_rng_state=True,
+                    provenance=self.experiment_provenance,
+                )
+
+                # Save the best model when validation improves.
+                if improved:
+                    save_checkpoint(
+                        checkpoint_state,
+                        os.path.join(
+                            self.output_dir,
+                            "checkpoint_best",
+                        ),
+                    )
+
+                # Always maintain a predictable resume checkpoint.
+                save_checkpoint(
+                    checkpoint_state,
+                    os.path.join(
+                        self.output_dir,
+                        "checkpoint",
+                    ),
+                )
+
+                # Optionally preserve historical epoch snapshots.
+                if self.cfg["save_all"]:
+                    save_checkpoint(
+                        checkpoint_state,
+                        os.path.join(
+                            self.output_dir,
+                            f"checkpoint_epoch_{self.epoch}",
+                        ),
+                    )
+
+                self.logger.info(
+                    "Best Result: %s, epoch: %s",
+                    best_result,
+                    best_epoch,
+                )
 
             progress_bar.update()
 
-        self.logger.info("Best Result:{}, epoch:{}".format(best_result, best_epoch))
+        progress_bar.close()
+
+        self.logger.info(
+            "Best Result: %s, epoch: %s",
+            best_result,
+            best_epoch,
+        )
 
         return None
+
 
     def train_one_epoch(self, epoch):
         torch.set_grad_enabled(True)
@@ -127,7 +317,7 @@ class Trainer(object):
             img_sizes = targets['img_size']
             original_targets = targets
             targets = self.prepare_targets(targets, inputs.shape[0])
-            
+
             ##dn
             dn_args = None
             if self.cfg["use_dn"]:
@@ -173,6 +363,7 @@ class Trainer(object):
 
             progress_bar.update()
         progress_bar.close()
+
 
     def prepare_targets(self, targets, batch_size):
         targets_list = []

@@ -23,8 +23,6 @@ from .region_seg_head import RegionSegHead
 from .attribute_net import AttributeNet
 from .position_encoding import PositionEmbeddingSine
 from .connector import Connector
-from .depth_extractor import DepthFeatureExtractor
-from .depth_fusion import IntrinsicGuidedDepthFusion
 
 
 def _get_clones(module, N):
